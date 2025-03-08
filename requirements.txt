@@ -1,7 +1,7 @@
-fastapi
-uvicorn
-pypdf
+streamlit
+asyncpraw
 google-generativeai
-python-multipart
-sqlite3
-requests
+nest_asyncio
+matplotlib
+pandas
+plotly
