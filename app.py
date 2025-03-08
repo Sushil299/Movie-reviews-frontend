@@ -8,99 +8,87 @@ Original file is located at
 """
 
 import streamlit as st
-import asyncio
-import nest_asyncio
-import json
-import matplotlib.pyplot as plt
-import pandas as pd
+import requests
 import plotly.express as px
-from backend import search_reddit, analyze_with_gemini  # Assuming backend code is in backend.py
 
-# Apply nest_asyncio to fix event loop issues
-nest_asyncio.apply()
+# Backend URL
+BACKEND_URL = "https://movie-reviews-frontend-h2rz.onrender.com"
 
-# Set Page Config
+# Streamlit UI
 st.set_page_config(page_title="🎬 Movie Review Analyzer", layout="wide")
 
 # Title with an Icon
-st.markdown("<h1 style='text-align: center;'>🎬 Movie Review Analyzer</h1>", unsafe_allow_html=True)
-
-# ⭐ Value Proposition Section (Short & Impactful)
 st.markdown("""
-<div style="text-align: center; font-size: 18px; font-weight: bold; color: #FF5733;">
-🚀 Say Goodbye to Fake Reviews!
+<div style="text-align: center; font-size: 24px; font-weight: bold; color: #FF5733;">
+🚀 Say Goodbye to Fake Reviews! 🎥
 🔎 Get **Real & Unbiased** Movie Opinions from Reddit Discussions.
 </div>
 """, unsafe_allow_html=True)
 
+# User Input
+st.markdown("### 🎥 Enter Movie Name")
+movie_name = st.text_input("", placeholder="e.g., Animal, Oppenheimer, Pathaan")
 
-# Input Section
-movie_name = st.text_input("🔎 Enter Movie Name", placeholder="e.g., Animal, Jawan, Kantara")
-days = st.slider("⏳ Look back (days)", 7, 90, 30)
+if st.button("🔍 Analyze Movie"):
+    if movie_name:
+        with st.spinner("Fetching Reddit discussions..."):
+            response = requests.get(f"{BACKEND_URL}/analyze", params={"movie_name": movie_name})
 
-# Button to Fetch Analysis
-if st.button("🎥 Analyze Movie"):
-    if not movie_name:
-        st.warning("⚠️ Please enter a movie name!")
-    else:
-        with st.spinner("⏳ Fetching and analyzing Reddit discussions..."):
-            reddit_data = asyncio.run(search_reddit(movie_name, days))
-            analysis_result = asyncio.run(analyze_with_gemini(movie_name, reddit_data))
+            if response.status_code == 200:
+                analysis = response.json()
 
-        if not analysis_result:
-            st.error("❌ Analysis failed! Try again later.")
-        else:
-            # Movie Poster GIF (Random from API or Static)
-            st.image("https://media.giphy.com/media/3o6ZsYx1UcOSd3EmBO/giphy.gif", use_column_width=True)
+                # Display Results
+                st.subheader("📢 TL;DR Summary")
+                st.success(analysis.get("TL;DR Summary", "No summary available."))
 
-            # Summary Section
-            st.subheader("📌 TL;DR Summary")
-            st.success(analysis_result.get("TL;DR Summary", "No summary available."))
-
-            # Sentiment Analysis Visualization
-            st.subheader("📊 Sentiment Analysis")
-            sentiment = analysis_result.get("Overall Sentiment Analysis", {})
-            if sentiment:
+                # Sentiment Analysis Visualization
+                st.subheader("📊 Sentiment Analysis")
+                sentiment = analysis.get("Overall Sentiment Analysis", {})
                 labels = ["Positive", "Negative", "Neutral"]
                 values = [sentiment.get("Positive", 0), sentiment.get("Negative", 0), sentiment.get("Neutral", 0)]
-                fig = px.pie(names=labels, values=values, title="Sentiment Breakdown")
+                fig = px.pie(names=labels, values=values, title="Sentiment Breakdown", color=labels,
+                             color_discrete_map={"Positive": "green", "Negative": "red", "Neutral": "gray"})
                 st.plotly_chart(fig)
 
-            # Audience Reactions
-            st.subheader("🗣️ Audience Reactions")
-            st.write(analysis_result.get("Summary of Audience Reactions", "No data available."))
+                # Audience Reactions
+                st.subheader("💬 Audience Reactions")
+                st.write(analysis.get("Summary of Audience Reactions", "No data available."))
 
-            # Ratings Visualization
-            st.subheader("🌟 Key Aspects Ratings")
-            aspects = analysis_result.get("Key Aspects Discussed", {})
-            if aspects:
-                df = pd.DataFrame(list(aspects.items()), columns=["Aspect", "Rating"])
-                fig = px.bar(df, x="Aspect", y="Rating", title="Movie Aspects Ratings", color="Rating", text_auto=True)
-                st.plotly_chart(fig)
+                # Key Aspects Ratings
+                st.subheader("🎭 Key Aspects Ratings")
+                aspects = analysis.get("Key Aspects Discussed", {})
+                aspect_labels, aspect_values = zip(*aspects.items()) if aspects else ([], [])
+                if aspects:
+                    fig = px.bar(x=aspect_labels, y=aspect_values, title="Key Aspects Ratings",
+                                 labels={"x": "Aspect", "y": "Rating"}, color=aspect_values)
+                    st.plotly_chart(fig)
 
-            # Praise & Complaints
-            st.subheader("✅ Common Praise & ⚠️ Complaints")
-            praise = analysis_result.get("Common Praise & Complaints", {}).get("praise", [])
-            complaints = analysis_result.get("Common Praise & Complaints", {}).get("complaints", [])
+                # Common Praises & Complaints
+                st.subheader("👍 Common Praise & 👎 Complaints")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**✅ Praise:**")
+                    praises = analysis.get("Common Praise", [])
+                    for praise in praises:
+                        st.write(f"- {praise}")
 
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("### ✅ Praise")
-                for p in praise:
-                    st.write(f"- {p}")
+                with col2:
+                    st.write("**❌ Complaints:**")
+                    complaints = analysis.get("Common Complaints", [])
+                    for complaint in complaints:
+                        st.write(f"- {complaint}")
 
-            with col2:
-                st.write("### ⚠️ Complaints")
-                for c in complaints:
-                    st.write(f"- {c}")
-
-            # Similar Movies
-            st.subheader("🎬 Similar Movies You Might Like")
-            similar_movies = analysis_result.get("Comparison with Similar Movies", {})
-            if similar_movies:
+                # Similar Movies
+                st.subheader("🎬 Similar Movies")
+                similar_movies = analysis.get("Comparison with Similar Movies", [])
                 for movie in similar_movies:
-                    st.write(f"🎥 **{movie['Title']} ({movie['Year']})** - {movie['Brief explanation']}")
+                    st.write(f"🎞️ **{movie['Title']} ({movie['Year']})** - {movie['Brief explanation']}")
 
-            # Final Verdict
-            st.subheader("🎭 Final Verdict")
-            st.info(analysis_result.get("Final Verdict", "No verdict available."))
+                # Final Verdict
+                st.subheader("🏆 Final Verdict")
+                st.info(analysis.get("Final Verdict", "No final verdict available."))
+
+            else:
+                st.error("🚨 Error fetching movie analysis. Please try again.")
+    else:
+        st.warning("⚠️ Please enter a movie name.")
