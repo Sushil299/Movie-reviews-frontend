@@ -30,7 +30,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 reddit = asyncpraw.Reddit(
     client_id=REDDIT_CLIENT_ID,
     client_secret=REDDIT_CLIENT_SECRET,
-    user_agent="MovieReviewScraper"
+    user_agent="StockScraper"
 )
 
 genai.configure(api_key=GEMINI_API_KEY)
