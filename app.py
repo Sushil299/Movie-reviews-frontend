@@ -27,7 +27,7 @@ st.markdown("""
 
 # User Input
 st.markdown("### 🎥 Enter Movie Name")
-movie_name = st.text_input("", placeholder="e.g., Animal, Oppenheimer, Pathaan")
+movie_name = st.text_input("Movie Name", placeholder="e.g., Animal, Oppenheimer, Pathaan", label_visibility="collapsed")
 
 if st.button("🔍 Analyze Movie"):
     if movie_name:
