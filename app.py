@@ -72,7 +72,7 @@ if st.button("🔍 Analyze Movie"):
 
                         if not analysis:
                             st.error("The API response did not contain analysis data. Check the debug information for details.")
-                            return
+                            st.stop()
 
                         # Display Results
                         st.subheader("📢 TL;DR Summary")
