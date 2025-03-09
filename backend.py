@@ -39,8 +39,6 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 
 INDIAN_MOVIE_SUBREDDITS = [
     "bollywood", "IndianCinema", "tollywood", "kollywood", "MalayalamMovies",
-    "Lollywood", "BollyBlindsNGossip", "bollywoodmemes", "India", "AskIndia",
-    "movies", "moviecritic", "shittymoviedetails", "netflix", "boxoffice"
 ]
 
 # FastAPI App
