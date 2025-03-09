@@ -12,7 +12,7 @@ import requests
 import plotly.express as px
 
 # Backend URL
-BACKEND_URL = "https://movie-reviews-frontend-h2rz.onrender.com"
+BACKEND_URL = "https://movie-reviews-backend.onrender.com"
 
 # Streamlit UI
 st.set_page_config(page_title="🎬 Movie Review Analyzer", layout="wide")
@@ -27,7 +27,7 @@ st.markdown("""
 
 # User Input
 st.markdown("### 🎥 Enter Movie Name")
-movie_name = st.text_input("Movie Name", placeholder="e.g., Animal, Oppenheimer, Pathaan", label_visibility="hidden")
+movie_name = st.text_input("Movie Name", placeholder="e.g., Animal, Oppenheimer, Pathaan", label_visibility="collapsed")
 
 if st.button("🔍 Analyze Movie"):
     if movie_name:
@@ -35,58 +35,84 @@ if st.button("🔍 Analyze Movie"):
             response = requests.get(f"{BACKEND_URL}/analyze", params={"movie_name": movie_name})
 
             if response.status_code == 200:
-                analysis = response.json()
+                api_data = response.json()
+                analysis = api_data.get("analysis", {})
 
                 # Display Results
                 st.subheader("📢 TL;DR Summary")
-                st.success(analysis.get("TL;DR Summary", "No summary available."))
+                st.success(analysis.get("tldr", "No summary available."))
 
                 # Sentiment Analysis Visualization
                 st.subheader("📊 Sentiment Analysis")
-                sentiment = analysis.get("Overall Sentiment Analysis", {})
+                sentiment = analysis.get("overallSentiment", {})
                 labels = ["Positive", "Negative", "Neutral"]
-                values = [sentiment.get("Positive", 0), sentiment.get("Negative", 0), sentiment.get("Neutral", 0)]
-                fig = px.pie(names=labels, values=values, title="Sentiment Breakdown", color=labels,
-                             color_discrete_map={"Positive": "green", "Negative": "red", "Neutral": "gray"})
-                st.plotly_chart(fig)
+                values = [
+                    sentiment.get("positive", 0),
+                    sentiment.get("negative", 0),
+                    sentiment.get("neutral", 0),
+                ]
+                if sum(values) > 0:
+                    fig = px.pie(
+                        names=labels,
+                        values=values,
+                        title="Sentiment Breakdown",
+                        color=labels,
+                        color_discrete_map={"Positive": "green", "Negative": "red", "Neutral": "gray"},
+                    )
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("No sentiment data available.")
 
                 # Audience Reactions
                 st.subheader("💬 Audience Reactions")
-                st.write(analysis.get("Summary of Audience Reactions", "No data available."))
+                audience_reactions = analysis.get("audienceReactions", {})
+                st.write(audience_reactions.get("summary", "No data available."))
+                st.write("**Polarization:**", audience_reactions.get("polarization", "Not available."))
+                st.write("**Spoilers:**", audience_reactions.get("spoilers", "Not available."))
 
                 # Key Aspects Ratings
                 st.subheader("🎭 Key Aspects Ratings")
-                aspects = analysis.get("Key Aspects Discussed", {})
-                aspect_labels, aspect_values = zip(*aspects.items()) if aspects else ([], [])
-                if aspects:
+                key_aspects = analysis.get("keyAspects", {})
+                if key_aspects:
+                    aspect_labels = list(key_aspects.keys())
+                    aspect_values = [aspect["score"] if isinstance(aspect["score"], int) else 0 for aspect in key_aspects.values()]
                     fig = px.bar(x=aspect_labels, y=aspect_values, title="Key Aspects Ratings",
                                  labels={"x": "Aspect", "y": "Rating"}, color=aspect_values)
                     st.plotly_chart(fig)
+                else:
+                    st.warning("No key aspect ratings available.")
 
                 # Common Praises & Complaints
                 st.subheader("👍 Common Praise & 👎 Complaints")
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write("**✅ Praise:**")
-                    praises = analysis.get("Common Praise", [])
+                    praises = analysis.get("commonPraise", [])
                     for praise in praises:
                         st.write(f"- {praise}")
 
                 with col2:
                     st.write("**❌ Complaints:**")
-                    complaints = analysis.get("Common Complaints", [])
+                    complaints = analysis.get("commonComplaints", [])
                     for complaint in complaints:
                         st.write(f"- {complaint}")
 
                 # Similar Movies
                 st.subheader("🎬 Similar Movies")
-                similar_movies = analysis.get("Comparison with Similar Movies", [])
+                similar_movies = analysis.get("similarMovies", [])
                 for movie in similar_movies:
-                    st.write(f"🎞️ **{movie['Title']} ({movie['Year']})** - {movie['Brief explanation']}")
+                    st.write(f"🎞️ **{movie['title']} ({movie['year']})** - {movie['similarity']}")
 
                 # Final Verdict
                 st.subheader("🏆 Final Verdict")
-                st.info(analysis.get("Final Verdict", "No final verdict available."))
+                final_verdict = analysis.get("finalVerdict", {})
+                st.write("**Who Would Enjoy:**", final_verdict.get("whoWouldEnjoy", "Not available."))
+                st.write("**Who Would Not Enjoy:**", final_verdict.get("whoWouldNotEnjoy", "Not available."))
+                st.write("**Theater vs Streaming:**", final_verdict.get("theaterVsStreaming", "Not available."))
+
+                # Limitations
+                st.subheader("⚠️ Limitations")
+                st.write(analysis.get("limitations", "No data available."))
 
             else:
                 st.error("🚨 Error fetching movie analysis. Please try again.")
