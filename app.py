@@ -10,8 +10,6 @@ Original file is located at
 import streamlit as st
 import requests
 import plotly.express as px
-import json
-import re
 
 # Backend URL
 BACKEND_URL = "https://movie-reviews-frontend-h2rz.onrender.com"
@@ -27,30 +25,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Function to fix malformed JSON
-def fix_json(json_string):
-    """Fix common JSON formatting issues"""
-    # Add missing commas between key-value pairs
-    json_string = re.sub(r'"\s*"', '","', json_string)
-
-    # Ensure all keys are properly quoted
-    json_string = re.sub(r'(\n\s*)(\w+):', r'\1"\2":', json_string)
-
-    # Fix nested objects missing commas
-    json_string = re.sub(r'}\s*{', '},{', json_string)
-
-    # Add missing commas in arrays
-    json_string = re.sub(r']\s*\[', '],[', json_string)
-
-    return json_string
+# Debug section
+st.sidebar.subheader("Debug Information")
+debug_expander = st.sidebar.expander("Show Debug Info", expanded=False)
 
 # User Input
 st.markdown("### 🎥 Enter Movie Name")
 movie_name = st.text_input("Movie Name", placeholder="e.g., Animal, Oppenheimer, Pathaan", label_visibility="collapsed")
-
-# Debug section
-st.sidebar.subheader("Debug Information")
-debug_expander = st.sidebar.expander("Show Debug Info", expanded=False)
 
 if st.button("🔍 Analyze Movie"):
     if movie_name:
@@ -80,194 +61,128 @@ if st.button("🔍 Analyze Movie"):
 
                 if response.status_code == 200:
                     try:
-                        # Try to parse the JSON response directly
-                        try:
-                            api_data = response.json()
-                        except json.JSONDecodeError:
-                            # If parsing fails, try to fix the JSON
-                            with debug_expander:
-                                st.write("Original response text (malformed JSON):")
-                                st.text(response.text)
-
-                                fixed_json_text = fix_json(response.text)
-                                st.write("Attempted to fix JSON:")
-                                st.text(fixed_json_text)
-
-                            try:
-                                api_data = json.loads(fixed_json_text)
-                            except json.JSONDecodeError as e:
-                                st.error(f"Could not parse the API response as JSON. Error: {str(e)}")
-                                st.error("Please contact the backend team to fix the JSON format.")
-                                st.stop()
+                        api_data = response.json()
 
                         # Display raw response for debugging
                         with debug_expander:
                             st.write("Parsed API data:")
                             st.json(api_data)
 
-                        # Handle the special JSON structure from your backend
-                        if "analysis" in api_data:
-                            analysis = api_data["analysis"]
+                        # Check if we have a properly structured response
+                        if "title" in api_data and "sections" in api_data:
+                            # Display the title
+                            st.title(api_data["title"])
 
-                            # Convert analysis from dict with numbered keys to a proper structure
-                            if isinstance(analysis, dict):
-                                # Extract the data based on the structure seen in your response
-                                tldr = analysis.get("1. TL;DR Summary", "No summary available.")
-                                overall_sentiment = analysis.get("2. Overall Sentiment Analysis", {})
-                                audience_reactions = analysis.get("3. Summary of Audience Reactions", "")
-                                key_aspects = analysis.get("4. Key Aspects Discussed", {})
-                                common_items = analysis.get("5. Common Praise & Complaints", {})
-                                similar_movies = analysis.get("6. Comparison with Similar Movies", [])
-                                final_verdict = analysis.get("7. Final Verdict", {})
+                            # Process each section
+                            for section in api_data["sections"]:
+                                section_title = section.get("title", "")
+                                section_content = section.get("content", "")
 
-                                # Display Results
-                                st.subheader("📢 TL;DR Summary")
-                                st.success(tldr)
+                                st.subheader(f"📌 {section_title}")
 
-                                # Sentiment Analysis Visualization
-                                st.subheader("📊 Sentiment Analysis")
-                                if isinstance(overall_sentiment, dict):
-                                    labels = ["Positive", "Negative", "Neutral"]
-                                    values = [
-                                        overall_sentiment.get("positivePercentage", 0),
-                                        overall_sentiment.get("negativePercentage", 0),
-                                        overall_sentiment.get("neutralPercentage", 0),
-                                    ]
-                                    if sum(values) > 0:
+                                # Handle sentiment section specially with a pie chart
+                                if "SENTIMENT" in section_title:
+                                    positive = section.get("positive", 0)
+                                    negative = section.get("negative", 0)
+                                    neutral = section.get("neutral", 0)
+
+                                    if positive > 0 or negative > 0 or neutral > 0:
                                         fig = px.pie(
-                                            names=labels,
-                                            values=values,
+                                            names=["Positive", "Negative", "Neutral"],
+                                            values=[positive, negative, neutral],
                                             title="Sentiment Breakdown",
-                                            color=labels,
+                                            color=["Positive", "Negative", "Neutral"],
                                             color_discrete_map={"Positive": "green", "Negative": "red", "Neutral": "gray"},
                                         )
                                         st.plotly_chart(fig)
-                                    else:
-                                        st.warning("No sentiment data available.")
+
+                                    st.write(section_content)
 
                                     # Display key phrases if available
-                                    if "keyPhrases" in overall_sentiment and overall_sentiment["keyPhrases"]:
+                                    key_phrases = section.get("key_phrases", [])
+                                    if key_phrases:
                                         st.write("**Key Phrases:**")
-                                        phrases = overall_sentiment["keyPhrases"]
-                                        if isinstance(phrases, dict):
-                                            phrases = list(phrases.values())
-                                        elif isinstance(phrases, list):
-                                            phrases = phrases
-                                        else:
-                                            phrases = []
-
-                                        for phrase in phrases:
+                                        for phrase in key_phrases:
                                             st.write(f"- {phrase}")
-                                else:
-                                    st.warning("No sentiment data available.")
 
-                                # Audience Reactions
-                                st.subheader("💬 Audience Reactions")
-                                st.write(audience_reactions)
+                                # Handle key aspects section with a bar chart
+                                elif "KEY ASPECTS" in section_title:
+                                    aspects = section.get("items", [])
+                                    if aspects:
+                                        aspect_names = []
+                                        aspect_scores = []
+                                        aspect_explanations = []
 
-                                # Key Aspects Ratings
-                                st.subheader("🎭 Key Aspects Ratings")
-                                if isinstance(key_aspects, dict):
-                                    aspect_labels = []
-                                    aspect_values = []
-                                    aspect_explanations = []
+                                        for aspect in aspects:
+                                            name = aspect.get("name", "")
+                                            score = aspect.get("score", "N/A")
+                                            explanation = aspect.get("explanation", "")
 
-                                    for aspect, data in key_aspects.items():
-                                        if isinstance(data, dict):
-                                            score = data.get("score")
-                                            if score and score != "N/A":
-                                                try:
-                                                    score_val = float(score)
-                                                    aspect_labels.append(aspect)
-                                                    aspect_values.append(score_val)
-                                                    aspect_explanations.append(data.get("explanation", ""))
-                                                except (ValueError, TypeError):
-                                                    pass
+                                            if name and score != "N/A":
+                                                aspect_names.append(name)
+                                                aspect_scores.append(score)
+                                                aspect_explanations.append(explanation)
 
-                                    if aspect_labels and aspect_values:
-                                        fig = px.bar(
-                                            x=aspect_labels,
-                                            y=aspect_values,
-                                            title="Key Aspects Ratings",
-                                            labels={"x": "Aspect", "y": "Rating"},
-                                            color=aspect_values,
-                                            color_continuous_scale="Viridis"
-                                        )
-                                        st.plotly_chart(fig)
+                                        if aspect_names and aspect_scores:
+                                            fig = px.bar(
+                                                x=aspect_names,
+                                                y=aspect_scores,
+                                                title="Key Aspects Ratings",
+                                                labels={"x": "Aspect", "y": "Rating"},
+                                                color=aspect_scores,
+                                                color_continuous_scale="Viridis"
+                                            )
+                                            st.plotly_chart(fig)
 
-                                        # Display explanations for each aspect
-                                        for i, aspect in enumerate(aspect_labels):
-                                            if i < len(aspect_explanations):
-                                                st.write(f"**{aspect}:** {aspect_explanations[i]}")
-                                    else:
-                                        st.warning("No valid aspect ratings to display.")
-                                else:
-                                    st.warning("No key aspect ratings available.")
+                                        # Display explanations
+                                        st.write(section_content)
 
-                                # Common Praises & Complaints
-                                st.subheader("👍 Common Praise & 👎 Complaints")
-                                if isinstance(common_items, dict):
+                                # Handle praise and complaints section
+                                elif "PRAISE & COMPLAINTS" in section_title:
+                                    praise = section.get("praise", [])
+                                    complaints = section.get("complaints", [])
+
                                     col1, col2 = st.columns(2)
 
                                     with col1:
                                         st.write("**✅ Praise:**")
-                                        praises = common_items.get("praise", [])
-                                        if isinstance(praises, dict):
-                                            praises = list(praises.values())
-
-                                        if praises:
-                                            for praise in praises:
-                                                st.write(f"- {praise}")
+                                        if praise:
+                                            for item in praise:
+                                                st.write(f"- {item}")
                                         else:
                                             st.write("No praise data available.")
 
                                     with col2:
                                         st.write("**❌ Complaints:**")
-                                        complaints = common_items.get("complaints", [])
-                                        if isinstance(complaints, dict):
-                                            complaints = list(complaints.values())
-
                                         if complaints:
-                                            for complaint in complaints:
-                                                st.write(f"- {complaint}")
+                                            for item in complaints:
+                                                st.write(f"- {item}")
                                         else:
                                             st.write("No complaints data available.")
-                                else:
-                                    st.warning("No praise or complaints data available.")
 
-                                # Similar Movies
-                                st.subheader("🎬 Similar Movies")
-                                if similar_movies:
-                                    # Handle both list and dict formats
-                                    if isinstance(similar_movies, dict):
-                                        similar_movies = list(similar_movies.values())
+                                # Handle similar movies section
+                                elif "SIMILAR MOVIES" in section_title:
+                                    movies = section.get("movies", [])
+                                    if movies:
+                                        for movie in movies:
+                                            st.write(f"🎞️ **{movie}**")
+                                    else:
+                                        st.write(section_content)
 
-                                    for movie in similar_movies:
-                                        if isinstance(movie, dict):
-                                            title = movie.get("title", "Unknown")
-                                            year = movie.get("year", "N/A")
-                                            similarity = movie.get("similarity", "")
-                                            st.write(f"🎞️ **{title} ({year})** - {similarity}")
+                                # For all other sections, just display the content
                                 else:
-                                    st.write("No similar movies data available.")
+                                    st.write(section_content)
 
-                                # Final Verdict
-                                st.subheader("🏆 Final Verdict")
-                                if isinstance(final_verdict, dict):
-                                    st.write("**Who Would Enjoy:**", final_verdict.get("whoWouldEnjoy", "Not available."))
-                                    st.write("**Who Might Not Enjoy:**", final_verdict.get("whoMightNotEnjoy", "Not available."))
-                                    st.write("**Theater vs Streaming:**", final_verdict.get("theaterOrStreaming", "Not available."))
-                                else:
-                                    st.write("No final verdict data available.")
-                            else:
-                                st.error("The analysis data is not in the expected format.")
+                                # Add a separator between sections
+                                st.markdown("---")
                         else:
-                            st.error("The API response did not contain analysis data.")
+                            st.error("The API response did not contain the expected data structure.")
 
                     except Exception as e:
                         st.error(f"Error processing API response: {str(e)}")
                         with debug_expander:
                             st.exception(e)
+                            st.text(response.text)
                 else:
                     st.error(f"🚨 Error fetching movie analysis. Status code: {response.status_code}")
                     with debug_expander:
