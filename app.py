@@ -12,7 +12,7 @@ import requests
 import plotly.express as px
 
 # Backend URL
-BACKEND_URL = "https://movie-reviews-backend.onrender.com"
+BACKEND_URL = "https://movie-reviews-frontend-h2rz.onrender.com"
 
 # Streamlit UI
 st.set_page_config(page_title="🎬 Movie Review Analyzer", layout="wide")
