@@ -9,522 +9,122 @@ Original file is located at
 
 import streamlit as st
 import requests
-import plotly.express as px
+import json
 import plotly.graph_objects as go
-from datetime import datetime
 
-# Backend URL
-BACKEND_URL = "https://movie-reviews-frontend-h2rz.onrender.com"
+def fetch_movie_analysis(movie_name):
+    url = "https://movie-reviews-frontend-h2rz.onrender.com/analyze"
+    params = {"movie_name": movie_name}
+    response = requests.get(url, params=params)
 
-# Page configuration with custom theme
-st.set_page_config(
-    page_title="🎬 CineInsight",
-    page_icon="🎬",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error("Failed to fetch data. Please try again.")
+        return None
 
-# Custom CSS
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #FF5733;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        font-weight: 400;
-        color: #555;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .section-header {
-        font-size: 1.5rem;
-        font-weight: 600;
-        color: #1E3A8A;
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-        border-bottom: 2px solid #1E3A8A;
-        padding-bottom: 0.3rem;
-    }
-    .card {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 1rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 8px;
-        padding: 1rem;
-        text-align: center;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-    }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-    }
-    .metric-label {
-        font-size: 0.9rem;
-        color: #666;
-    }
-    .praise-item {
-        background-color: #d1e7dd;
-        border-left: 4px solid #198754;
-        padding: 0.5rem 1rem;
-        margin-bottom: 0.5rem;
-        border-radius: 0 5px 5px 0;
-    }
-    .complaint-item {
-        background-color: #f8d7da;
-        border-left: 4px solid #dc3545;
-        padding: 0.5rem 1rem;
-        margin-bottom: 0.5rem;
-        border-radius: 0 5px 5px 0;
-    }
-    .movie-suggestion {
-        background-color: #e2e3e5;
-        border-radius: 5px;
-        padding: 0.5rem 1rem;
-        margin-bottom: 0.5rem;
-    }
-    .logo-text {
-        font-family: 'Arial Black', sans-serif;
-        font-size: 2.8rem;
-        background: linear-gradient(45deg, #FF5733, #C70039);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        padding: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+def sentiment_gauge(positive, negative, neutral):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=positive - negative,
+        title={"text": "Reddit Sentiment"},
+        gauge={
+            "axis": {"range": [-100, 100]},
+            "bar": {"color": "red"},
+            "steps": [
+                {"range": [-100, -50], "color": "#ff6b6b"},
+                {"range": [-50, 0], "color": "#ff9999"},
+                {"range": [0, 50], "color": "#99ff99"},
+                {"range": [50, 100], "color": "#4caf50"},
+            ]
+        }
+    ))
+    return fig
 
-# Sidebar
-with st.sidebar:
-    st.markdown('<div class="logo-text">CineInsight</div>', unsafe_allow_html=True)
-    st.markdown("### Discover what Reddit *really* thinks about movies")
+def display_analysis(data):
+    if not data:
+        return
 
-    # Filter options (for future implementation)
-    st.markdown("### 🔍 Filters")
-    time_period = st.selectbox("Time Period", ["Last 3 months", "Last 6 months", "Last year", "All time"])
-    subreddits = st.multiselect(
-        "Subreddits",
-        ["r/movies", "r/boxoffice", "r/bollywood", "r/IndianCinema", "r/tollywood", "r/flicks", "r/truefilm"],
-        default=["r/movies", "r/bollywood", "r/IndianCinema"]
+    st.markdown(
+        """
+        <style>
+            .main {background-color: #111; color: white;}
+            .stTextInput, .stButton {width: 100%;}
+            .stButton button {background-color: red; color: white; font-size: 18px;}
+            .stCard {border-radius: 10px; background-color: #222; padding: 15px; margin-bottom: 10px;}
+        </style>
+        """, unsafe_allow_html=True
     )
 
-    # About section
-    st.markdown("### ℹ️ About")
-    st.markdown("""
-    **CineInsight** analyzes Reddit discussions to provide unbiased movie reviews.
-
-    Data sources:
-    - Reddit comments & posts
-    - Sentiment analysis via Gemini AI
-    """)
-
-    # Debug expander
-    debug_expander = st.expander("🛠️ Debug Information", expanded=False)
-
-# Main content
-st.markdown('<h1 class="main-header">🎬 CineInsight</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Discover what Reddit *really* thinks about movies</p>', unsafe_allow_html=True)
-
-# Search bar with auto-complete (placeholder for future implementation)
-movie_name = st.text_input("🔍 Search for a movie", placeholder="e.g., Animal, Oppenheimer, Pathaan")
-
-# Featured movies carousel (placeholder for future implementation)
-if not movie_name:
-    st.markdown('<div class="section-header">Popular Searches</div>', unsafe_allow_html=True)
-    cols = st.columns(4)
-    for i, col in enumerate(cols):
-        with col:
-            if i == 0:
-                st.button("Oppenheimer", use_container_width=True, key=f"featured_{i}")
-            elif i == 1:
-                st.button("Animal", use_container_width=True, key=f"featured_{i}")
-            elif i == 2:
-                st.button("Pathaan", use_container_width=True, key=f"featured_{i}")
-            elif i == 3:
-                st.button("Killers of the Flower Moon", use_container_width=True, key=f"featured_{i}")
-
-# Analysis button
-if st.button("🔍 Analyze Movie", use_container_width=True, type="primary"):
-    if movie_name:
-        with st.spinner(f"Analyzing Reddit discussions for '{movie_name}'..."):
-            try:
-                # Prepare request with proper headers
-                headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                }
-
-                # Log the request details
-                request_url = f"{BACKEND_URL}/analyze"
-                params = {"movie_name": movie_name}
-
-                with debug_expander:
-                    st.write(f"Request URL: {request_url}")
-                    st.write(f"Params: {params}")
-
-                # Make the request
-                response = requests.get(request_url, params=params, headers=headers, timeout=60)
-
-                # Log the response
-                with debug_expander:
-                    st.write(f"Response Status: {response.status_code}")
-                    st.write(f"Response Headers: {dict(response.headers)}")
-
-                if response.status_code == 200:
-                    try:
-                        api_data = response.json()
-
-                        # Display raw response for debugging
-                        with debug_expander:
-                            st.write("Parsed API data:")
-                            st.json(api_data)
-
-                        # Check if we have a properly structured response
-                        if "title" in api_data and "sections" in api_data:
-                            # Display the movie title with release date if available
-                            st.markdown(f'<h1 style="text-align: center; margin-bottom: 2rem;">{api_data["title"]}</h1>', unsafe_allow_html=True)
-
-                            # Create a clean layout
-                            tldr_section = None
-                            sentiment_section = None
-                            aspects_section = None
-                            praise_complaints_section = None
-                            audience_section = None
-                            similar_section = None
-                            final_section = None
-
-                            # Find all sections first
-                            for section in api_data["sections"]:
-                                section_title = section.get("title", "")
-
-                                if "TL;DR" in section_title:
-                                    tldr_section = section
-                                elif "SENTIMENT" in section_title:
-                                    sentiment_section = section
-                                elif "KEY ASPECTS" in section_title:
-                                    aspects_section = section
-                                elif "PRAISE & COMPLAINTS" in section_title:
-                                    praise_complaints_section = section
-                                elif "AUDIENCE" in section_title:
-                                    audience_section = section
-                                elif "SIMILAR" in section_title:
-                                    similar_section = section
-                                elif "FINAL" in section_title:
-                                    final_section = section
-
-                            # Display Summary and Sentiment at the top
-                            top_cols = st.columns([2, 3])
-
-                            # TL;DR Summary Card
-                            with top_cols[0]:
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                st.markdown('<div class="section-header">At a Glance</div>', unsafe_allow_html=True)
-
-                                if tldr_section:
-                                    st.markdown(tldr_section.get("content", "No summary available"))
-
-                                # Add final verdict if available
-                                if final_section:
-                                    final_content = final_section.get("content", "")
-
-                                    enjoyment_parts = []
-                                    if "Who Would Enjoy:" in final_content:
-                                        enjoy_part = final_content.split("Who Would Enjoy:")[1]
-                                        if "Who Might Not Enjoy:" in enjoy_part:
-                                            enjoy_part = enjoy_part.split("Who Might Not Enjoy:")[0]
-                                        enjoyment_parts.append(("For fans of:", enjoy_part.strip()))
-
-                                    if "Who Might Not Enjoy:" in final_content:
-                                        not_enjoy_part = final_content.split("Who Might Not Enjoy:")[1]
-                                        if "Theater or Streaming:" in not_enjoy_part:
-                                            not_enjoy_part = not_enjoy_part.split("Theater or Streaming:")[0]
-                                        enjoyment_parts.append(("May not appeal to:", not_enjoy_part.strip()))
-
-                                    if enjoyment_parts:
-                                        st.markdown("### Quick Take")
-                                        for label, content in enjoyment_parts:
-                                            st.markdown(f"**{label}** {content}")
-
-                                st.markdown('</div>', unsafe_allow_html=True)
-
-                                # Audience Reactions
-                                if audience_section:
-                                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                                    st.markdown('<div class="section-header">Audience Reactions</div>', unsafe_allow_html=True)
-                                    st.markdown(audience_section.get("content", "No audience reactions available"))
-                                    st.markdown('</div>', unsafe_allow_html=True)
-
-                            # Sentiment Analysis
-                            with top_cols[1]:
-                                if sentiment_section:
-                                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                                    st.markdown('<div class="section-header">Sentiment Analysis</div>', unsafe_allow_html=True)
-
-                                    positive = sentiment_section.get("positive", 0)
-                                    negative = sentiment_section.get("negative", 0)
-                                    neutral = sentiment_section.get("neutral", 0)
-
-                                    # Calculate sentiment score (-100 to 100)
-                                    sentiment_score = positive - negative
-
-                                    # Create sentiment meter
-                                    fig = go.Figure(go.Indicator(
-                                        mode = "gauge+number",
-                                        value = sentiment_score,
-                                        domain = {'x': [0, 1], 'y': [0, 1]},
-                                        title = {'text': "Reddit Sentiment", 'font': {'size': 24}},
-                                        gauge = {
-                                            'axis': {'range': [-100, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-                                            'bar': {'color': "darkblue"},
-                                            'bgcolor': "white",
-                                            'borderwidth': 2,
-                                            'bordercolor': "gray",
-                                            'steps': [
-                                                {'range': [-100, -60], 'color': '#ff6666'},
-                                                {'range': [-60, -20], 'color': '#ffcccc'},
-                                                {'range': [-20, 20], 'color': '#e6e6e6'},
-                                                {'range': [20, 60], 'color': '#ccffcc'},
-                                                {'range': [60, 100], 'color': '#66ff66'}
-                                            ],
-                                            'threshold': {
-                                                'line': {'color': "red", 'width': 4},
-                                                'thickness': 0.75,
-                                                'value': 0
-                                            }
-                                        }
-                                    ))
-
-                                    fig.update_layout(
-                                        height=250,
-                                        margin=dict(l=20, r=20, t=50, b=20),
-                                    )
-
-                                    st.plotly_chart(fig, use_container_width=True)
-
-                                    # Sentiment breakdown pie chart
-                                    sentiment_cols = st.columns(3)
-                                    with sentiment_cols[0]:
-                                        st.markdown(f'<div class="metric-card" style="background-color: #d1e7dd;">', unsafe_allow_html=True)
-                                        st.markdown(f'<div class="metric-value">{positive}%</div>', unsafe_allow_html=True)
-                                        st.markdown(f'<div class="metric-label">Positive</div>', unsafe_allow_html=True)
-                                        st.markdown('</div>', unsafe_allow_html=True)
-
-                                    with sentiment_cols[1]:
-                                        st.markdown(f'<div class="metric-card" style="background-color: #e2e3e5;">', unsafe_allow_html=True)
-                                        st.markdown(f'<div class="metric-value">{neutral}%</div>', unsafe_allow_html=True)
-                                        st.markdown(f'<div class="metric-label">Neutral</div>', unsafe_allow_html=True)
-                                        st.markdown('</div>', unsafe_allow_html=True)
-
-                                    with sentiment_cols[2]:
-                                        st.markdown(f'<div class="metric-card" style="background-color: #f8d7da;">', unsafe_allow_html=True)
-                                        st.markdown(f'<div class="metric-value">{negative}%</div>', unsafe_allow_html=True)
-                                        st.markdown(f'<div class="metric-label">Negative</div>', unsafe_allow_html=True)
-                                        st.markdown('</div>', unsafe_allow_html=True)
-
-                                    # Key phrases
-                                    key_phrases = sentiment_section.get("key_phrases", [])
-                                    if key_phrases:
-                                        st.markdown("#### Key Phrases")
-                                        cols = st.columns(len(key_phrases[:3]))
-                                        for i, phrase in enumerate(key_phrases[:3]):
-                                            with cols[i]:
-                                                st.markdown(f'<div style="background-color: #e6e6fa; padding: 0.5rem; border-radius: 5px; text-align: center; font-weight: 500;">{phrase}</div>', unsafe_allow_html=True)
-
-                                    st.markdown('</div>', unsafe_allow_html=True)
-
-                            # Key Aspects section with radar chart
-                            st.markdown('<div class="card">', unsafe_allow_html=True)
-                            st.markdown('<div class="section-header">Key Aspects</div>', unsafe_allow_html=True)
-
-                            aspect_cols = st.columns([2, 3])
-
-                            with aspect_cols[0]:
-                                if aspects_section:
-                                    aspects = aspects_section.get("items", [])
-                                    aspect_names = []
-                                    aspect_scores = []
-                                    aspect_explanations = []
-
-                                    for aspect in aspects:
-                                        name = aspect.get("name", "")
-                                        score = aspect.get("score", "N/A")
-                                        explanation = aspect.get("explanation", "")
-
-                                        if name and score != "N/A":
-                                            aspect_names.append(name)
-                                            aspect_scores.append(score)
-                                            aspect_explanations.append(explanation)
-
-                                    # Create aspect explanations
-                                    for i, (name, score, explanation) in enumerate(zip(aspect_names, aspect_scores, aspect_explanations)):
-                                        # Determine color based on score
-                                        if score >= 8:
-                                            color = "#198754"  # Green for high scores
-                                        elif score >= 6:
-                                            color = "#fd7e14"  # Orange for medium scores
-                                        else:
-                                            color = "#dc3545"  # Red for low scores
-
-                                        st.markdown(f"""
-                                        <div style="margin-bottom: 1rem;">
-                                            <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
-                                                <div style="font-weight: 600; margin-right: 1rem;">{name}</div>
-                                                <div style="background-color: {color}; color: white; border-radius: 5px; padding: 0.2rem 0.5rem; min-width: 2rem; text-align: center;">{score}/10</div>
-                                            </div>
-                                            <div style="color: #555; font-size: 0.9rem;">{explanation}</div>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-
-                            with aspect_cols[1]:
-                                if aspects_section and aspect_names and aspect_scores:
-                                    # Create radar chart
-                                    fig = go.Figure()
-
-                                    # Add radar chart
-                                    fig.add_trace(go.Scatterpolar(
-                                        r=aspect_scores,
-                                        theta=aspect_names,
-                                        fill='toself',
-                                        fillcolor='rgba(67, 147, 195, 0.2)',
-                                        line=dict(color='rgb(67, 147, 195)'),
-                                        name='Aspects'
-                                    ))
-
-                                    # Update layout
-                                    fig.update_layout(
-                                        polar=dict(
-                                            radialaxis=dict(
-                                                visible=True,
-                                                range=[0, 10]
-                                            )
-                                        ),
-                                        showlegend=False,
-                                        height=400,
-                                        margin=dict(l=40, r=40, t=20, b=30)
-                                    )
-
-                                    st.plotly_chart(fig, use_container_width=True)
-
-                            st.markdown('</div>', unsafe_allow_html=True)
-
-                            # Praise and Complaints section
-                            if praise_complaints_section:
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                st.markdown('<div class="section-header">Praise & Complaints</div>', unsafe_allow_html=True)
-
-                                praise = praise_complaints_section.get("praise", [])
-                                complaints = praise_complaints_section.get("complaints", [])
-
-                                praise_complaint_cols = st.columns(2)
-
-                                with praise_complaint_cols[0]:
-                                    st.markdown("#### What People Loved")
-                                    if praise:
-                                        for item in praise:
-                                            st.markdown(f'<div class="praise-item">👍 {item}</div>', unsafe_allow_html=True)
-                                    else:
-                                        st.write("No specific praise mentioned.")
-
-                                with praise_complaint_cols[1]:
-                                    st.markdown("#### What Could Be Better")
-                                    if complaints:
-                                        for item in complaints:
-                                            st.markdown(f'<div class="complaint-item">👎 {item}</div>', unsafe_allow_html=True)
-                                    else:
-                                        st.write("No specific complaints mentioned.")
-
-                                st.markdown('</div>', unsafe_allow_html=True)
-
-                            # Similar Movies
-                            if similar_section:
-                                st.markdown('<div class="card">', unsafe_allow_html=True)
-                                st.markdown('<div class="section-header">Similar Movies You Might Like</div>', unsafe_allow_html=True)
-
-                                movies = similar_section.get("movies", [])
-                                if movies:
-                                    # Display as a grid
-                                    cols = st.columns(min(3, len(movies)))
-                                    for i, movie in enumerate(movies):
-                                        with cols[i % 3]:
-                                            st.markdown(f'<div class="movie-suggestion">🎬 {movie}</div>', unsafe_allow_html=True)
-                                else:
-                                    st.write(similar_section.get("content", "No similar movies found."))
-
-                                st.markdown('</div>', unsafe_allow_html=True)
-
-                            # Watch or Skip recommendation
-                            if final_section:
-                                final_content = final_section.get("content", "")
-
-                                if "Theater or Streaming:" in final_content:
-                                    viewing_rec = final_content.split("Theater or Streaming:")[1].strip()
-
-                                    # Determine if it's a watch or skip recommendation based on sentiment
-                                    if sentiment_section and sentiment_section.get("positive", 0) > 60:
-                                        recommendation = "Must Watch"
-                                        bg_color = "#198754"
-                                    elif sentiment_section and sentiment_section.get("positive", 0) > 40:
-                                        recommendation = "Worth Watching"
-                                        bg_color = "#0d6efd"
-                                    else:
-                                        recommendation = "Consider Skipping"
-                                        bg_color = "#dc3545"
-
-                                    st.markdown(f"""
-                                    <div style="background-color: {bg_color}; color: white; padding: 1rem; border-radius: 10px; text-align: center; margin: 1rem 0;">
-                                        <h2 style="margin: 0;">{recommendation}</h2>
-                                        <p style="margin-top: 0.5rem; margin-bottom: 0;">{viewing_rec}</p>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-
-                            # Footer section with data sources and timestamp
-                            st.markdown(f"""
-                            <div style="text-align: center; color: #6c757d; font-size: 0.8rem; margin-top: 2rem;">
-                                Analysis based on Reddit discussions as of {datetime.now().strftime("%B %d, %Y")}.
-                                Powered by CineInsight AI.
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        else:
-                            st.error("The API response did not contain the expected data structure.")
-
-                    except Exception as e:
-                        st.error(f"Error processing API response: {str(e)}")
-                        with debug_expander:
-                            st.exception(e)
-                            st.text(response.text)
-                else:
-                    st.error(f"🚨 Error fetching movie analysis. Status code: {response.status_code}")
-                    with debug_expander:
-                        st.write("Response content:")
-                        st.text(response.text[:500] + "..." if len(response.text) > 500 else response.text)
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"🚨 Network error: {str(e)}")
-                with debug_expander:
-                    st.exception(e)
-            except Exception as e:
-                st.error(f"🚨 Unexpected error: {str(e)}")
-                with debug_expander:
-                    st.exception(e)
-    else:
-        st.warning("⚠️ Please enter a movie name.")
-else:
-    # Show placeholder content when no movie is searched
-    st.markdown("""
-    <div style="text-align: center; padding: 4rem 2rem; color: #6c757d;">
-        <img src="https://i.imgur.com/1234.png" alt="Movie icon" style="max-width: 100px; margin-bottom: 1rem;">
-        <h2>Enter a movie name and click "Analyze Movie"</h2>
-        <p>We'll analyze Reddit discussions to give you genuine audience opinions.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <h1 style='text-align: center;'>🎬 CineInsight</h1>
+        <h3 style='text-align: center;'>Discover what Reddit *really* thinks about movies</h3>
+        """, unsafe_allow_html=True
+    )
+
+    st.subheader(data.get("title", "Movie Analysis"))
+
+    sentiment_section = None
+    positive = negative = neutral = 0
+
+    for section in data.get("sections", []):
+        title = section.get("title", "")
+        content = section.get("content", "")
+
+        with st.container():
+            if "SENTIMENT ANALYSIS" in title:
+                sentiment_section = section
+            elif "Positive:" in title:
+                sentiment_values = content.split("\n")
+                positive = int(sentiment_values[0].split(":")[1].strip().replace("%", ""))
+                negative = int(sentiment_values[1].split(":")[1].strip().replace("%", ""))
+                neutral = int(sentiment_values[2].split(":")[1].strip().replace("%", ""))
+            elif "KEY ASPECTS" in title:
+                st.markdown("### Key Aspects Ratings")
+                for aspect in content.split("\n"):
+                    if ":" in aspect:
+                        aspect_name, score = aspect.split(":")
+                        st.write(f"**{aspect_name.strip()}**: {score.strip()}")
+            elif "Top Praise:" in title:
+                st.markdown("### Top Praise & Complaints")
+                praise_complaints = content.split("\n\n")
+                if len(praise_complaints) >= 2:
+                    st.write("**Praise:**")
+                    for line in praise_complaints[0].split("\n"):
+                        st.write(f"- {line}")
+
+                    st.write("**Complaints:**")
+                    for line in praise_complaints[1].split("\n"):
+                        st.write(f"- {line}")
+            elif "SIMILAR MOVIES" in title:
+                st.markdown("### Similar Movies")
+                for movie in section.get("movies", []):
+                    st.write(f"- {movie}")
+            elif "FINAL VERDICT" in title:
+                st.markdown("### Final Verdict")
+                st.write(content)
+            else:
+                st.markdown(f"### {title}")
+                st.write(content)
+
+    if sentiment_section:
+        st.markdown("### Sentiment Analysis")
+        st.plotly_chart(sentiment_gauge(positive, negative, neutral))
+
+        st.write(f"**Positive:** {positive}%")
+        st.write(f"**Negative:** {negative}%")
+        st.write(f"**Neutral:** {neutral}%")
+
+# Streamlit UI
+st.sidebar.markdown("### 🎥 Search for a movie")
+movie_name = st.sidebar.text_input("Enter Movie Name", "Animal")
+
+if st.sidebar.button("🔍 Analyze Movie"):
+    with st.spinner("Fetching movie analysis..."):
+        api_data = fetch_movie_analysis(movie_name)
+        if api_data:
+            st.session_state["api_data"] = api_data
+
+if "api_data" in st.session_state:
+    display_analysis(st.session_state["api_data"])
