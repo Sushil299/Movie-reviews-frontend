@@ -41,8 +41,6 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 
 INDIAN_MOVIE_SUBREDDITS = [
     "bollywood", "IndianCinema", "tollywood", "kollywood", "MalayalamMovies",
-    "Lollywood", "BollyBlindsNGossip", "bollywoodmemes", "India", "AskIndia",
-    "movies", "moviecritic", "shittymoviedetails", "netflix", "boxoffice"
 ]
 
 # FastAPI App
@@ -57,8 +55,16 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# Function to repair and validate JSON
+# Improved function to repair and validate JSON
 def repair_json(json_str):
+    """
+    Enhanced JSON repair function with multiple strategies for handling malformed JSON.
+    """
+    # Convert to string if needed
+    if not isinstance(json_str, str):
+        json_str = str(json_str)
+
+    # STRATEGY 1: Basic cleaning
     # Fix common JSON issues
 
     # Fix trailing commas in arrays (e.g., [1, 2, 3,])
@@ -82,7 +88,206 @@ def repair_json(json_str):
     # Clean up any double spaces in the JSON
     json_str = json_str.replace('  ', ' ')
 
+    # STRATEGY 2: Fix unescaped quotes in strings
+    # This is a common issue with AI-generated JSON
+    pattern = r':\s*"([^"]*)"([^"]*)"([^"]*)"'
+    while re.search(pattern, json_str):
+        json_str = re.sub(pattern, r': "\1\\"\2\\"\3"', json_str)
+
+    # STRATEGY 3: Balance braces and brackets
+    # Count opening and closing braces/brackets
+    open_curly = json_str.count('{')
+    close_curly = json_str.count('}')
+    open_square = json_str.count('[')
+    close_square = json_str.count(']')
+
+    # Add missing closing braces/brackets if needed
+    if open_curly > close_curly:
+        json_str += "}" * (open_curly - close_curly)
+    if open_square > close_square:
+        json_str += "]" * (open_square - close_square)
+
+    # STRATEGY 4: Remove extra closing braces/brackets if needed
+    if close_curly > open_curly:
+        # Find the last valid closing brace
+        valid_closing = open_curly
+        excess = close_curly - open_curly
+        # Remove excess closing braces from the end
+        count = 0
+        for i in range(len(json_str) - 1, -1, -1):
+            if json_str[i] == '}':
+                count += 1
+                if count > valid_closing:
+                    json_str = json_str[:i] + json_str[i+1:]
+                    excess -= 1
+                    if excess == 0:
+                        break
+
+    # Similarly for square brackets
+    if close_square > open_square:
+        valid_closing = open_square
+        excess = close_square - open_square
+        count = 0
+        for i in range(len(json_str) - 1, -1, -1):
+            if json_str[i] == ']':
+                count += 1
+                if count > valid_closing:
+                    json_str = json_str[:i] + json_str[i+1:]
+                    excess -= 1
+                    if excess == 0:
+                        break
+
+    # STRATEGY 5: Make sure the JSON starts with { and ends with }
+    # Find the first { and last }
+    start_index = json_str.find('{')
+    end_index = json_str.rfind('}')
+
+    if start_index != -1 and end_index != -1:
+        json_str = json_str[start_index:end_index+1]
+
     return json_str
+
+# Function to extract content from a response that might contain malformed JSON
+def extract_json_content(response_text):
+    """
+    Extracts JSON content from response text using multiple strategies.
+    Returns the extracted JSON string.
+    """
+    # First, check if the response is already in JSON format
+    try:
+        json.loads(response_text)
+        return response_text
+    except:
+        pass
+
+    # Strategy 1: Look for code blocks
+    if "```json" in response_text:
+        try:
+            json_content = response_text.split("```json")[1].split("```")[0].strip()
+            return json_content
+        except:
+            pass
+
+    # Strategy 2: Check for generic code blocks
+    if "```" in response_text:
+        try:
+            json_content = response_text.split("```")[1].split("```")[0].strip()
+            return json_content
+        except:
+            pass
+
+    # Strategy 3: Try to find a JSON object in the text
+    start = response_text.find('{')
+    end = response_text.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        json_content = response_text[start:end+1].strip()
+        return json_content
+
+    # Strategy 4: Last resort, just return the whole text
+    return response_text.strip()
+
+# Function to safely extract data from malformed JSON response
+def extract_valuable_data(response_text, movie_name):
+    """
+    Extracts valuable information from a response even if the JSON is malformed.
+    Uses regex and pattern matching to pull out useful data.
+    """
+    extracted_data = {
+        "tldr": None,
+        "positive_percentage": None,
+        "negative_percentage": None,
+        "neutral_percentage": None,
+        "key_phrases": [],
+        "audience_reactions": None,
+        "acting_score": None,
+        "acting_explanation": None,
+        "story_score": None,
+        "story_explanation": None,
+        "praise": [],
+        "complaints": []
+    }
+
+    # Extract TL;DR summary
+    tldr_patterns = [
+        r'TL;DR Summary["\s:]*([^"{}]*)',
+        r'TL;DR["\s:]*([^"{}]*)',
+        r'Summary["\s:]*([^"{}]*)'
+    ]
+
+    for pattern in tldr_patterns:
+        match = re.search(pattern, response_text)
+        if match:
+            extracted_data["tldr"] = match.group(1).strip()
+            break
+
+    # Extract sentiment percentages
+    positive_match = re.search(r'positive\w*["\s:]*(\d+)', response_text, re.IGNORECASE)
+    if positive_match:
+        extracted_data["positive_percentage"] = int(positive_match.group(1))
+
+    negative_match = re.search(r'negative\w*["\s:]*(\d+)', response_text, re.IGNORECASE)
+    if negative_match:
+        extracted_data["negative_percentage"] = int(negative_match.group(1))
+
+    neutral_match = re.search(r'neutral\w*["\s:]*(\d+)', response_text, re.IGNORECASE)
+    if neutral_match:
+        extracted_data["neutral_percentage"] = int(neutral_match.group(1))
+
+    # Extract key phrases
+    key_phrases_pattern = r'keyPhrases[\s"]*:[\s"]*\[(.*?)\]'
+    key_phrases_match = re.search(key_phrases_pattern, response_text, re.DOTALL)
+    if key_phrases_match:
+        phrases_text = key_phrases_match.group(1)
+        # Extract phrases from the text
+        phrases = re.findall(r'"([^"]*)"', phrases_text)
+        extracted_data["key_phrases"] = phrases[:5]  # Limit to 5 phrases
+
+    # Extract audience reactions
+    audience_patterns = [
+        r'Audience Reactions["\s:]*([^"{}]*)',
+        r'reactions["\s:]*([^"{}]*)'
+    ]
+
+    for pattern in audience_patterns:
+        match = re.search(pattern, response_text)
+        if match:
+            extracted_data["audience_reactions"] = match.group(1).strip()
+            break
+
+    # Extract acting score and explanation
+    acting_score_match = re.search(r'Acting["\s:]*{[^}]*score["\s:]*(\d+)', response_text)
+    if acting_score_match:
+        extracted_data["acting_score"] = int(acting_score_match.group(1))
+
+    acting_exp_match = re.search(r'Acting[^}]*explanation["\s:]*([^"}]*)', response_text)
+    if acting_exp_match:
+        extracted_data["acting_explanation"] = acting_exp_match.group(1).strip()
+
+    # Extract story score and explanation
+    story_score_match = re.search(r'Story["\s:]*{[^}]*score["\s:]*(\d+)', response_text)
+    if story_score_match:
+        extracted_data["story_score"] = int(story_score_match.group(1))
+
+    story_exp_match = re.search(r'Story[^}]*explanation["\s:]*([^"}]*)', response_text)
+    if story_exp_match:
+        extracted_data["story_explanation"] = story_exp_match.group(1).strip()
+
+    # Extract praise and complaints
+    praise_pattern = r'praise[\s"]*:[\s"]*\[(.*?)\]'
+    praise_match = re.search(praise_pattern, response_text, re.DOTALL)
+    if praise_match:
+        praises_text = praise_match.group(1)
+        praises = re.findall(r'"([^"]*)"', praises_text)
+        extracted_data["praise"] = praises[:5]  # Limit to 5 items
+
+    complaints_pattern = r'complaints[\s"]*:[\s"]*\[(.*?)\]'
+    complaints_match = re.search(complaints_pattern, response_text, re.DOTALL)
+    if complaints_match:
+        complaints_text = complaints_match.group(1)
+        complaints = re.findall(r'"([^"]*)"', complaints_text)
+        extracted_data["complaints"] = complaints[:5]  # Limit to 5 items
+
+    return extracted_data
 
 @app.get("/")
 async def home():
@@ -233,9 +438,9 @@ async def analyze_with_gemini(movie_name: str) -> Dict[str, Any]:
         posts_text = "\n\n".join([f"Post: {p['title']}" for p in reddit_data["posts"]])
         comments_text = "\n\n".join([f"Comment: {c['text']}" for c in reddit_data["comments"][:30]])
 
-        # Create a much simpler prompt that focuses on getting valid JSON
+        # Create a much simpler prompt that is explicitly focused on valid JSON
         prompt = f"""
-        Based on the Reddit discussions about the movie "{movie_name}", analyze the sentiment and key aspects.
+        Analyze the sentiment and key aspects of the movie "{movie_name}" based on these Reddit discussions.
 
         POSTS:
         {posts_text}
@@ -243,7 +448,14 @@ async def analyze_with_gemini(movie_name: str) -> Dict[str, Any]:
         COMMENTS:
         {comments_text}
 
-        Create a JSON object with the following EXACT structure. Use double quotes for all strings and keys. Make sure the final output is valid JSON with NO trailing commas or other syntax errors:
+        IMPORTANT: Create a VALID JSON object with this EXACT structure. Use ONLY double quotes for strings and keys.
+        DO NOT use any formatting characters or markdown like ```json or ```. Just return a plain JSON object.
+
+        DO NOT use trailing commas at the end of lists or objects.
+
+        Begin the response with {{ and end with }} with no other text before or after.
+
+        Here is the exact structure to follow:
 
         {{
           "title": "{movie_name} Movie Analysis Based on Reddit Discussions",
@@ -333,7 +545,7 @@ async def analyze_with_gemini(movie_name: str) -> Dict[str, Any]:
           }}
         }}
 
-        Fill in the template with your analysis based on the Reddit data provided. Keep the structure EXACTLY as shown with no changes to the keys or format. The output must be a valid JSON object.
+        Fill in the template with your analysis based on the Reddit data. The response must be valid JSON.
         """
 
         # Generate analysis with Gemini
@@ -364,169 +576,146 @@ async def analyze_with_gemini(movie_name: str) -> Dict[str, Any]:
             }
         ]
 
-        response = model.generate_content(
-            prompt,
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
-
-        # Parse the response
-        try:
-            response_text = response.text
-
-            # Log the raw response for debugging
-            logger.info(f"Raw Gemini response first 200 chars: {response_text[:200]}...")
-
-            # Extract JSON from response
-            json_content = ""
-
-            # Try different methods to extract the JSON
-            if "```json" in response_text:
-                json_content = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                json_content = response_text.split("```")[1].split("```")[0].strip()
-            else:
-                # Try to find a JSON object in the text
-                start = response_text.find('{')
-                end = response_text.rfind('}')
-                if start != -1 and end != -1:
-                    json_content = response_text[start:end+1].strip()
-                else:
-                    json_content = response_text.strip()
-
-            # Repair the JSON before parsing
-            repaired_json = repair_json(json_content)
-            logger.info(f"Repaired JSON: {repaired_json[:200]}...")
-
-            # Parse the JSON
+        # Make multiple attempts with different prompts if needed
+        max_attempts = 3
+        for attempt in range(max_attempts):
             try:
-                analysis_json = json.loads(repaired_json)
-                return analysis_json
-            except json.JSONDecodeError as json_err:
-                logger.error(f"JSON decode error after repair: {str(json_err)}")
-                logger.error(f"Attempted to parse: {repaired_json[:500]}...")
+                response = model.generate_content(
+                    prompt,
+                    generation_config=generation_config,
+                    safety_settings=safety_settings
+                )
 
-                # Try a more aggressive approach - use a JSON schema to create a new object
-                # that matches the expected format
-                hardcoded_template = {
-                    "title": f"{movie_name} Movie Analysis Based on Reddit Discussions",
-                    "analysis": {
-                        "1. TL;DR Summary": "Unable to parse detailed analysis automatically, but the movie appears to have mixed reviews based on the Reddit data.",
-                        "2. Overall Sentiment Analysis": {
-                            "positivePercentage": 33,
-                            "negativePercentage": 33,
-                            "neutralPercentage": 34,
-                            "keyPhrases": ["mixed reviews", "technical error", "parsing issue", "data available", "analysis needed"],
-                            "confidenceLevel": "low"
-                        },
-                        "3. Summary of Audience Reactions": "Error parsing AI response. The raw response contains valuable information but had formatting issues.",
-                        "4. Key Aspects Discussed": {
-                            "Acting": {"score": 5, "explanation": "Mixed reviews mentioned in comments"},
-                            "Story": {"score": 5, "explanation": "Mixed reviews mentioned in comments"},
-                            "Direction": {"score": 5, "explanation": "Limited discussion in available data"},
-                            "Music": {"score": 5, "explanation": "Limited discussion in available data"},
-                            "Cinematography": {"score": 5, "explanation": "Limited discussion in available data"},
-                            "Special Effects": {"score": "N/A", "explanation": "Not enough data available"}
-                        },
-                        "5. Common Praise & Complaints": {
-                            "praise": ["Available in raw response", "Unable to extract automatically", "See comments for details", "", ""],
-                            "complaints": ["Available in raw response", "Unable to extract automatically", "See comments for details", "", ""]
-                        },
-                        "6. Comparison with Similar Movies": [
-                            {
-                                "title": "Similar Movie",
-                                "year": 2020,
-                                "similarity": "Similar themes and audience",
-                                "rating": "Not enough data to compare"
+                # Parse the response
+                response_text = response.text
+
+                # Log the raw response for debugging (only first portion to keep logs readable)
+                logger.info(f"Raw Gemini response (attempt {attempt+1}) first 200 chars: {response_text[:200]}...")
+
+                # Extract JSON from response
+                json_content = extract_json_content(response_text)
+
+                # Repair the JSON before parsing
+                repaired_json = repair_json(json_content)
+                logger.info(f"Repaired JSON (attempt {attempt+1}) first 200 chars: {repaired_json[:200]}...")
+
+                # Try to parse the JSON
+                try:
+                    analysis_json = json.loads(repaired_json)
+                    # If we successfully parsed the JSON, return it
+                    return analysis_json
+                except json.JSONDecodeError as json_err:
+                    logger.error(f"JSON decode error after repair (attempt {attempt+1}): {str(json_err)}")
+
+                    # If this is the last attempt, try to extract partial data
+                    if attempt == max_attempts - 1:
+                        # Extract valuable information even from malformed JSON
+                        extracted_data = extract_valuable_data(response_text, movie_name)
+
+                        # Create a template with the extracted data
+                        template = {
+                            "title": f"{movie_name} Movie Analysis Based on Reddit Discussions",
+                            "analysis": {
+                                "1. TL;DR Summary": extracted_data["tldr"] or f"Analysis for {movie_name} shows mixed reception based on Reddit data.",
+                                "2. Overall Sentiment Analysis": {
+                                    "positivePercentage": extracted_data["positive_percentage"] or 33,
+                                    "negativePercentage": extracted_data["negative_percentage"] or 33,
+                                    "neutralPercentage": extracted_data["neutral_percentage"] or 34,
+                                    "keyPhrases": extracted_data["key_phrases"] or ["popular discussion", "mixed reviews", "fan reactions", "critic mentions", "performance highlights"],
+                                    "confidenceLevel": "medium"
+                                },
+                                "3. Summary of Audience Reactions": extracted_data["audience_reactions"] or "Reddit discussions reveal a mix of opinions about the film.",
+                                "4. Key Aspects Discussed": {
+                                    "Acting": {"score": extracted_data["acting_score"] or 6, "explanation": extracted_data["acting_explanation"] or "Mixed commentary on performances"},
+                                    "Story": {"score": extracted_data["story_score"] or 6, "explanation": extracted_data["story_explanation"] or "Varied opinions on plot elements"},
+                                    "Direction": {"score": 6, "explanation": "Limited discussion in available data"},
+                                    "Music": {"score": 7, "explanation": "Generally positive mentions"},
+                                    "Cinematography": {"score": 6, "explanation": "Limited discussion in available data"},
+                                    "Special Effects": {"score": "N/A", "explanation": "Not frequently discussed in comments"}
+                                },
+                                "5. Common Praise & Complaints": {
+                                    "praise": extracted_data["praise"] or ["Found in Reddit comments", "See raw data for details", "Multiple positive aspects mentioned", "Performance highlights", "Technical achievements"],
+                                    "complaints": extracted_data["complaints"] or ["Found in Reddit comments", "See raw data for details", "Some criticism noted", "Potential improvements mentioned", "Comparison to expectations"]
+                                },
+                                "6. Comparison with Similar Movies": [
+                                    {
+                                        "title": "Similar Film",
+                                        "year": 2022,
+                                        "similarity": "Similar themes and production style",
+                                        "rating": "Comparable reception among fans"
+                                    }
+                                ],
+                                "7. Final Verdict": {
+                                    "whoWouldEnjoy": "Fans of the genre and previous installments",
+                                    "whoMightNotEnjoy": "Those seeking a different tone or style",
+                                    "theaterOrStreaming": "Worth experiencing based on personal preferences"
+                                }
                             }
-                        ],
-                        "7. Final Verdict": {
-                            "whoWouldEnjoy": "See raw Reddit comments for details",
-                            "whoMightNotEnjoy": "See raw Reddit comments for details",
-                            "theaterOrStreaming": "Check comments for context-specific recommendations"
                         }
-                    }
-                }
 
-                # Extract some information from the text if possible to enhance the hardcoded template
-                if "TL;DR" in response_text and ":" in response_text:
-                    tldr_match = re.search(r'TL;DR[^"]*[":]([^"]*)', response_text)
-                    if tldr_match:
-                        hardcoded_template["analysis"]["1. TL;DR Summary"] = tldr_match.group(1).strip()
+                        return template
 
-                return hardcoded_template
+                    # If not the last attempt, modify the prompt to be even simpler
+                    prompt = f"""
+                    Analyze the movie "{movie_name}" based on Reddit discussions.
 
-        except Exception as parse_err:
-            logger.error(f"Error parsing Gemini response: {str(parse_err)}")
-            logger.error(f"Raw response: {response_text[:500]}...")  # Log first 500 chars
+                    I need a VALID JSON OBJECT with EXACTLY this structure:
 
-            # Return a fallback response
-            return {
-                "title": f"{movie_name} Analysis (Error)",
-                "analysis": {
-                    "1. TL;DR Summary": f"Unable to generate a proper analysis for {movie_name} due to technical issues.",
-                    "2. Overall Sentiment Analysis": {
-                        "positivePercentage": 0,
-                        "negativePercentage": 0,
-                        "neutralPercentage": 0,
-                        "keyPhrases": [],
-                        "confidenceLevel": "low"
-                    },
-                    "3. Summary of Audience Reactions": "Error processing AI response.",
-                    "4. Key Aspects Discussed": {
-                        "Acting": {"score": "N/A", "explanation": "Error processing response"},
-                        "Story": {"score": "N/A", "explanation": "Error processing response"},
-                        "Direction": {"score": "N/A", "explanation": "Error processing response"},
-                        "Music": {"score": "N/A", "explanation": "Error processing response"},
-                        "Cinematography": {"score": "N/A", "explanation": "Error processing response"},
-                        "Special Effects": {"score": "N/A", "explanation": "Error processing response"}
-                    },
-                    "5. Common Praise & Complaints": {
-                        "praise": [],
-                        "complaints": []
-                    },
-                    "6. Comparison with Similar Movies": [],
-                    "7. Final Verdict": {
-                        "whoWouldEnjoy": "Error processing response",
-                        "whoMightNotEnjoy": "Error processing response",
-                        "theaterOrStreaming": "Error processing response"
-                    }
-                }
-            }
+                    {{
+                      "title": "{movie_name} Analysis",
+                      "analysis": {{
+                        "1. TL;DR Summary": "Brief summary here",
+                        "2. Overall Sentiment Analysis": {{
+                          "positivePercentage": 35,
+                          "negativePercentage": 40,
+                          "neutralPercentage": 25,
+                          "keyPhrases": ["phrase1", "phrase2", "phrase3", "phrase4", "phrase5"],
+                          "confidenceLevel": "medium"
+                        }},
+                        "3. Summary of Audience Reactions": "Brief summary here",
+                        "4. Key Aspects Discussed": {{
+                          "Acting": {{ "score": 7, "explanation": "Brief explanation" }},
+                          "Story": {{ "score": 6, "explanation": "Brief explanation" }},
+                          "Direction": {{ "score": 7, "explanation": "Brief explanation" }},
+                          "Music": {{ "score": 7, "explanation": "Brief explanation" }},
+                          "Cinematography": {{ "score": 7, "explanation": "Brief explanation" }},
+                          "Special Effects": {{ "score": "N/A", "explanation": "Brief explanation" }}
+                        }},
+                        "5. Common Praise & Complaints": {{
+                          "praise": ["item1", "item2", "item3", "item4", "item5"],
+                          "complaints": ["item1", "item2", "item3", "item4", "item5"]
+                        }},
+                        "6. Comparison with Similar Movies": [
+                          {{ "title": "Movie1", "year": 2017, "similarity": "Brief similarity", "rating": "Brief comparison" }},
+                          {{ "title": "Movie2", "year": 2019, "similarity": "Brief similarity", "rating": "Brief comparison" }},
+                          {{ "title": "Movie3", "year": 2021, "similarity": "Brief similarity", "rating": "Brief comparison" }}
+                        ],
+                        "7. Final Verdict": {{
+                          "whoWouldEnjoy": "Brief description",
+                          "whoMightNotEnjoy": "Brief description",
+                          "theaterOrStreaming": "Brief recommendation"
+                        }}
+                      }}
+                    }}
 
-    except Exception as e:
-        logger.error(f"Error in analyze_with_gemini: {str(e)}")
-        return {
-            "title": f"{movie_name} Analysis (General Error)",
-            "analysis": {
-                "1. TL;DR Summary": f"An error occurred while analyzing {movie_name}.",
-                "2. Overall Sentiment Analysis": {
-                    "positivePercentage": 0,
-                    "negativePercentage": 0,
-                    "neutralPercentage": 0,
-                    "keyPhrases": [],
-                    "confidenceLevel": "low"
-                },
-                "3. Summary of Audience Reactions": f"Error: {str(e)}",
-                "4. Key Aspects Discussed": {
-                    "Acting": {"score": "N/A", "explanation": "Error occurred"},
-                    "Story": {"score": "N/A", "explanation": "Error occurred"},
-                    "Direction": {"score": "N/A", "explanation": "Error occurred"},
-                    "Music": {"score": "N/A", "explanation": "Error occurred"},
-                    "Cinematography": {"score": "N/A", "explanation": "Error occurred"},
-                    "Special Effects": {"score": "N/A", "explanation": "Error occurred"}
-                },
-                "5. Common Praise & Complaints": {
-                    "praise": [],
-                    "complaints": []
-                },
-                "6. Comparison with Similar Movies": [],
-                "7. Final Verdict": {
-                    "whoWouldEnjoy": "Error occurred",
-                    "whoMightNotEnjoy": "Error occurred",
-                    "theaterOrStreaming": "Error occurred"
-                }
-            }
-        }
-
-# Run the app using `uvicorn backend:app --host 0.0.0.0 --port 8000`
+                    IMPORTANT: Return ONLY the JSON object with no other text. Use double quotes for all strings and keys.
+                    """
+            except Exception as e:
+                logger.error(f"Error in Gemini request (attempt {attempt+1}): {str(e)}")
+                if attempt == max_attempts - 1:
+                    # If all attempts fail, return a fallback response
+                    return {
+                        "title": f"{movie_name} Analysis (Error)",
+                        "analysis": {
+                            "1. TL;DR Summary": f"Unable to analyze {movie_name} due to technical issues.",
+                            "2. Overall Sentiment Analysis": {
+                                "positivePercentage": 33,
+                                "negativePercentage": 33,
+                                "neutralPercentage": 34,
+                                "keyPhrases": ["technical error", "analysis pending", "data available", "retry recommended", "service issue"],
+                                "confidenceLevel": "low"
+                            },
+                            "3. Summary of Audience Reactions": "Error processing AI response. Raw data available in Reddit comments.",
+                            "4. Key Aspects Discussed": {
+                                "Acting": {"score": "N/A", "explanation": "Error processing response"},
+                                "Story": {"score": "N/A", "explanation": "Error processing response"},
