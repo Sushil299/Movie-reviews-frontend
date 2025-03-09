@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timedelta
 import json
 import asyncio
+from asyncio import sleep
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -57,10 +58,32 @@ async def search_reddit(movie_name: str, days: int = 60) -> Dict[str, Any]:
 
     for subreddit_name in INDIAN_MOVIE_SUBREDDITS:
         try:
-            subreddit = await reddit.subreddit(subreddit_name)
-            search_results = subreddit.search(movie_name, time_filter="month", limit=10)
+            # Add debug logging for authentication check
+            logger.info(f"Searching subreddit: {subreddit_name} for movie: {movie_name}")
 
-            async for post in search_results:
+            # Create subreddit instance
+            subreddit = await reddit.subreddit(subreddit_name)
+
+            # Create search generator
+            search_generator = subreddit.search(movie_name, time_filter="month", limit=10)
+
+            # Make sure we have a valid generator before proceeding
+            if search_generator is None:
+                logger.warning(f"Search generator for {subreddit_name} is None")
+                continue
+
+            # Collect search results into a list to verify we have data
+            search_results = []
+            async for result in search_generator:
+                search_results.append(result)
+
+            # Check if we found any results
+            if not search_results:
+                logger.info(f"No results found for {movie_name} in {subreddit_name}")
+                continue
+
+            # Process the results
+            for post in search_results:
                 post_time = datetime.fromtimestamp(post.created_utc)
                 if post_time < time_threshold or post.score < 50:
                     continue
@@ -73,79 +96,138 @@ async def search_reddit(movie_name: str, days: int = 60) -> Dict[str, Any]:
                     "num_comments": post.num_comments
                 })
 
-                await post.comments.replace_more(limit=5)
-                for comment in post.comments.list()[:20]:
-                    if len(comment.body.strip()) > 30 and comment.score >= 20:
-                        comments.append({
-                            "text": comment.body,
-                            "score": comment.score,
-                            "author": str(comment.author),
-                            "url": f"https://www.reddit.com{comment.permalink}"
-                        })
+                # Make sure to handle comments asynchronously
+                try:
+                    await post.comments.replace_more(limit=5)
+                    comment_list = post.comments.list()
+
+                    for comment in comment_list[:20]:
+                        if hasattr(comment, 'body') and len(comment.body.strip()) > 30 and comment.score >= 20:
+                            comments.append({
+                                "text": comment.body,
+                                "score": comment.score,
+                                "author": str(comment.author),
+                                "url": f"https://www.reddit.com{comment.permalink}"
+                            })
+                except Exception as comment_err:
+                    logger.warning(f"Error processing comments for post in {subreddit_name}: {str(comment_err)}")
+                    continue
+
         except Exception as e:
             logger.warning(f"Error searching subreddit {subreddit_name}: {str(e)}")
+            # Add a delay between requests to avoid rate limiting
+            await sleep(1)
             continue
 
+        # Add a small delay between subreddit searches to avoid rate limiting
+        await sleep(0.5)
+
+    # Sort comments by score
     comments.sort(key=lambda x: x["score"], reverse=True)
+
+    # Log the results for debugging
+    logger.info(f"Found {total_posts} posts and {len(comments)} comments for {movie_name}")
+
     return {"posts": posts, "comments": comments[:50], "total_posts": total_posts}
 
 @app.get("/analyze")
 async def analyze_with_gemini(movie_name: str) -> Dict[str, Any]:
-    reddit_data = await search_reddit(movie_name, days=60)
-    posts_text = "\n\n".join([f"Post: {p['title']}" for p in reddit_data["posts"]])
-    comments_text = "\n\n".join([f"Comment: {c['text']}" for c in reddit_data["comments"][:30]])
-
-    prompt = f"""
-    Based on Reddit discussions and comments about {movie_name} in posts {posts_text} and comments {comments_text}, provide a detailed analysis to help users decide whether to watch the movie.
-
-    If limited data is available (fewer than 10 meaningful comments/posts), please note this limitation at the beginning of your response.
-
-    Include:
-
-    1. **TL;DR Summary**
-      - A concise 1-2 sentence verdict on the movie.
-
-    2. **Overall Sentiment Analysis**
-      - Percentage breakdown of Positive, Negative, and Neutral opinions.
-      - Include 3-5 key phrases/words that drove your sentiment classification.
-      - Note confidence level of sentiment analysis (high/medium/low).
-
-    3. **Summary of Audience Reactions**
-      - A 5-7 sentence overview of common praises and criticisms.
-      - Indicate if opinions are polarized or generally consistent.
-      - Note if analysis contains potential spoilers.
-
-    4. **Key Aspects Discussed**
-      - Rating and analysis for: Acting, Story, Direction, Music, Cinematography, and Special Effects.
-      - For each aspect, provide a score (1-10) and 1-2 sentence explanation.
-
-    5. **Common Praise & Complaints**
-      - 3-5 most frequently mentioned positive aspects.
-      - 3-5 most frequently mentioned criticisms.
-
-    6. **Comparison with Similar Movies**
-      - List 3-5 similar Indian movies that viewers might enjoy.
-      - For each recommendation, provide:
-        * Title
-        * Year
-        * Brief explanation of similarity (theme, director, style, actors)
-        * Whether it's rated better/worse than the movie in question
-
-    7. **Final Verdict**
-      - Who would most likely enjoy this movie? (demographics, interests, preferences)
-      - Who might not enjoy it?
-      - Is it worth watching in theaters or better for streaming?
-
-    Respond in a structured **JSON format**.
-    """
-
-    response = model.generate_content(prompt)
-
     try:
-        analysis = response.text.split("```json")[1].split("```")[0].strip()
-        return json.loads(analysis)
+        # Get Reddit data
+        reddit_data = await search_reddit(movie_name, days=60)
+
+        # Check if we have enough data to analyze
+        if not reddit_data["posts"] and not reddit_data["comments"]:
+            logger.warning(f"Insufficient data found for movie: {movie_name}")
+            return {
+                "error": "insufficient_data",
+                "message": f"Not enough Reddit discussions found about {movie_name}",
+                "tldr_summary": f"There isn't enough online discussion available to form an analysis of {movie_name}."
+            }
+
+        # Prepare text for analysis
+        posts_text = "\n\n".join([f"Post: {p['title']}" for p in reddit_data["posts"]])
+        comments_text = "\n\n".join([f"Comment: {c['text']}" for c in reddit_data["comments"][:30]])
+
+        prompt = f"""
+        Based on Reddit discussions and comments about {movie_name} in posts {posts_text} and comments {comments_text}, provide a detailed analysis to help users decide whether to watch the movie.
+
+        If limited data is available (fewer than 10 meaningful comments/posts), please note this limitation at the beginning of your response.
+
+        Include:
+
+        1. **TL;DR Summary**
+          - A concise 1-2 sentence verdict on the movie.
+
+        2. **Overall Sentiment Analysis**
+          - Percentage breakdown of Positive, Negative, and Neutral opinions.
+          - Include 3-5 key phrases/words that drove your sentiment classification.
+          - Note confidence level of sentiment analysis (high/medium/low).
+
+        3. **Summary of Audience Reactions**
+          - A 5-7 sentence overview of common praises and criticisms.
+          - Indicate if opinions are polarized or generally consistent.
+          - Note if analysis contains potential spoilers.
+
+        4. **Key Aspects Discussed**
+          - Rating and analysis for: Acting, Story, Direction, Music, Cinematography, and Special Effects.
+          - For each aspect, provide a score (1-10) and 1-2 sentence explanation.
+
+        5. **Common Praise & Complaints**
+          - 3-5 most frequently mentioned positive aspects.
+          - 3-5 most frequently mentioned criticisms.
+
+        6. **Comparison with Similar Movies**
+          - List 3-5 similar Indian movies that viewers might enjoy.
+          - For each recommendation, provide:
+            * Title
+            * Year
+            * Brief explanation of similarity (theme, director, style, actors)
+            * Whether it's rated better/worse than the movie in question
+
+        7. **Final Verdict**
+          - Who would most likely enjoy this movie? (demographics, interests, preferences)
+          - Who might not enjoy it?
+          - Is it worth watching in theaters or better for streaming?
+
+        Respond in a structured **JSON format**.
+        """
+
+        # Generate analysis with Gemini
+        logger.info(f"Sending request to Gemini for movie: {movie_name}")
+        response = model.generate_content(prompt)
+
+        # Parse the response
+        try:
+            # Check if the response contains JSON
+            if "```json" in response.text:
+                analysis = response.text.split("```json")[1].split("```")[0].strip()
+            else:
+                # Try to extract JSON directly
+                analysis = response.text.strip()
+
+            # Parse JSON
+            analysis_json = json.loads(analysis)
+            logger.info(f"Successfully parsed Gemini response for {movie_name}")
+            return analysis_json
+
+        except Exception as parse_err:
+            logger.error(f"Error parsing Gemini response: {str(parse_err)}")
+            logger.error(f"Raw response: {response.text[:500]}...")  # Log first 500 chars
+
+            # Return a fallback response
+            return {
+                "error": "parsing_error",
+                "message": "Error parsing the AI response",
+                "tldr_summary": f"Unable to generate a proper analysis for {movie_name} due to technical issues."
+            }
+
     except Exception as e:
-        logger.error(f"Error parsing Gemini response: {str(e)}")
-        return {}
+        logger.error(f"Error in analyze_with_gemini: {str(e)}")
+        return {
+            "error": "general_error",
+            "message": str(e),
+            "tldr_summary": f"An error occurred while analyzing {movie_name}."
+        }
 
 # Run the app using `uvicorn backend:app --host 0.0.0.0 --port 8000`
